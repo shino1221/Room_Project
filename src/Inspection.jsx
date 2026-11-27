@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
 import { ArrowUpRight, Building2, CircleCheck, ClipboardCheck, MapPin, TriangleAlert } from 'lucide-react'
 import { api } from './api.js'
 import { amount, cctvScore, dateLabel, formatNumber, homes, riskItems, riskScore, safetyScore } from './model.js'
+import { useEffect, useRef, useState } from 'react'
 
 const namedPlaces = { SW8:'전철역',BUS:'버스정류장',CS2:'편의점',MT1:'대형마트',HP8:'병원',PM9:'약국',SC4:'학교' }
 const approvalDate = value => String(value || '').replace(/^(\d{4})(\d{2})(\d{2})$/,'$1.$2.$3') || '미확인'
@@ -50,8 +50,8 @@ function Price({ submitted, submit, result, lookup }) {
     </form>
     {submitted && <p className={result.error ? 'notice error':'notice'} role="status">
       {result.error || (!report ? '유사 실거래를 조회하고 있습니다.'
-        : report.score==null ? '최근 '+report.months+'개월 유사 거래 '+report.count+'건 · 5건부터 점수를 계산합니다.'
-        : '유사 거래 '+report.count+'건 · '+submitted.contract+' ㎡당 중앙값 '+amount(report.median)+' · 이 집은 중앙값의 '+formatNumber(report.ratio*100)+'%')}
+          : report.score==null ? '최근 '+report.months+'개월 유사 거래 '+report.count+'건 · 5건부터 점수를 계산합니다.'
+              : '유사 거래 '+report.count+'건 · '+submitted.contract+' ㎡당 중앙값 '+amount(report.median)+' · 이 집은 중앙값의 '+formatNumber(report.ratio*100)+'%')}
     </p>}
     {report?.rows.length>0 && <details className="detail"><summary>비교한 실거래 보기</summary><div className="table-wrap"><table>
       <thead><tr><th>계약일</th><th>전용면적</th><th>보증금</th><th>월세</th></tr></thead>
@@ -64,16 +64,30 @@ function Contract({ building,records,setRecords,risk }) {
   const [buildingId,setBuildingId] = useState('')
   const rows = building.value?.items || []
   const selected = rows.find(b => b.id===buildingId) || (rows.length===1 ? rows[0] : null)
+
+  useEffect(() => {
+    if (!selected || selected.isViolation == null) return
+    setRecords(prev => ({
+      ...prev,
+      violation: { value: selected.isViolation ? 'yes' : 'no' }
+    }))
+  }, [selected?.id, selected?.isViolation])
+
   return <Panel id="contract" title="건물·계약 점검" meta="건축HUB · 정부24 · HUG">
+
     <div className="evidence"><h4><Building2 size={16}/> 건축물대장</h4>
       {!building.value ? <p role="status">{building.error || '건물 정보를 조회하고 있습니다.'}</p>
-        : !rows.length ? <p>해당 지번에서 조회된 대장 자료가 없습니다.</p> : <>
-          {rows.length>1 && <label>확인할 건물<select value={buildingId} onChange={e => { setBuildingId(e.target.value); setRecords(({violation:_violation,...rest}) => rest) }}>
-            <option value="">건물을 선택하세요</option>{rows.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select></label>}
-          {selected && <><dl><div><dt>건물 주용도</dt><dd>{selected.purpose || '미확인'}</dd></div><div><dt>사용승인일</dt><dd>{approvalDate(selected.approved)}</dd></div></dl>
-          <small>호실 용도와 위반 표기는 대장 원문에서 확인하세요.</small></>}
-        </>}
+          : !rows.length ? <p>해당 지번에서 조회된 대장 자료가 없습니다.</p> : <>
+            {rows.length>1 && <label>확인할 건물<select value={buildingId} onChange={e => { setBuildingId(e.target.value); setRecords(({violation:_violation,...rest}) => rest) }}>
+              <option value="">건물을 선택하세요</option>{rows.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select></label>}
+            {selected && <><dl>
+              <div><dt>건물 주용도</dt><dd>{selected.purpose || '미확인'}</dd></div>
+              <div><dt>사용승인일</dt><dd>{approvalDate(selected.approved)}</dd></div>
+              <div><dt>위반건축물 여부</dt><dd>{selected.violation || '미확인'}</dd></div>
+            </dl>
+              <small>호실별 세부 위반 표기는 대장 원문에서 최종 확인하세요.</small></>}
+          </>}
     </div>
     <p className="panel-copy">서류에서 확인한 결과를 선택하세요. 위험 신호마다 25점이며 높을수록 주의가 필요합니다.</p>
     {risk.flags.length>0 && <p className="notice error" role="status"><TriangleAlert size={16}/> 확인된 신호 · {risk.flags.map(([,name]) => name).join(', ')}</p>}
@@ -94,7 +108,7 @@ function Contract({ building,records,setRecords,risk }) {
 }
 
 function Access({ env,coords }) {
-  return <Panel id="access" title="생활 접근성" meta="직선거리 500m 기준">
+  return <Panel id="access" title="생활 접근성" meta="전철역 2km · 그 외 500m 기준">
     {!env.value ? <p className="notice" role="status">{env.error || (coords ? '주변 시설을 조회하고 있습니다.':'이 주소의 좌표 자료가 없어 주변 거리를 확인할 수 없습니다.')}</p> : <>
       {env.value.access.score==null && <p className="panel-copy">일부 자료를 받지 못했습니다. 공개 지도에서 확인되는 시설도 함께 표시합니다.</p>}
       <dl className="place-rows">
@@ -102,7 +116,7 @@ function Access({ env,coords }) {
           const live = kind==='BUS' ? env.value.stops : env.value.groups[kind]
           const first = (live.items ?? env.value.reference[kind])?.[0]
           return <div key={kind}><dt>{name}</dt><dd>{first ? <>{first.name}<small>{Math.round(first.distance)}m · {live.items ? kind==='BUS' ? 'TAGO':'카카오':'OpenStreetMap'}</small></>
-            : live.items ? '500m 안에 조회된 시설 없음':'자료 미확인'}</dd></div>
+              : live.items ? '반경 내 조회된 시설 없음':'자료 미확인'}</dd></div>
         })}
       </dl>
       <small>거리 기준 · {coords.source}</small>
@@ -110,16 +124,108 @@ function Access({ env,coords }) {
   </Panel>
 }
 
+function KakaoMap({ coords, cctv, env }) {
+  const mapRef = useRef(null)
+
+  useEffect(() => {
+    if (!coords || !mapRef.current || !window.kakao?.maps) return
+
+    window.kakao.maps.load(() => {
+      const center = new window.kakao.maps.LatLng(coords.lat, coords.lon)
+      const map = new window.kakao.maps.Map(mapRef.current, {
+        center,
+        level: 4
+      })
+
+      // 1. 300m 생활방범 안전 반경 원 표시
+      new window.kakao.maps.Circle({
+        center,
+        radius: 300,
+        strokeWeight: 1,
+        strokeColor: '#2563eb',
+        strokeOpacity: 0.4,
+        fillColor: '#3b82f6',
+        fillOpacity: 0.06,
+        map
+      })
+
+      // 2. 내 집(매물) 기본 마커 및 라벨 표시
+      const homeMarker = new window.kakao.maps.Marker({ position: center, map, zIndex: 10 })
+      const info = new window.kakao.maps.InfoWindow({
+        content: '<div style="padding:4px 8px;font-size:12px;font-weight:700;color:#251a14;">매물 위치</div>'
+      })
+      info.open(map, homeMarker)
+
+      // 3. 반경 300m 생활방범 CCTV 마커 (노란 별)
+      const cctvImg = new window.kakao.maps.MarkerImage(
+              'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png',
+              new window.kakao.maps.Size(24, 35)
+          )
+
+      ;(cctv?.points || []).forEach(p => {
+        const pos = new window.kakao.maps.LatLng(p.lat, p.lon)
+        const marker = new window.kakao.maps.Marker({
+          position: pos,
+          map,
+          image: cctvImg,
+          title: `생활방범 CCTV (${Math.round(p.distance)}m)`
+        })
+        const cctvInfo = new window.kakao.maps.InfoWindow({
+          content: `<div style="padding:3px 7px;font-size:11px;color:#1d4ed8;">CCTV · 약 ${Math.round(p.distance)}m</div>`
+        })
+        window.kakao.maps.event.addListener(marker, 'mouseover', () => cctvInfo.open(map, marker))
+        window.kakao.maps.event.addListener(marker, 'mouseout', () => cctvInfo.close())
+      })
+
+      // 4. 가장 가까운 전철역 · 버스정류장 · 주요 편의시설 마커 표시
+      if (env?.value) {
+        Object.entries(namedPlaces).forEach(([kind, label]) => {
+          const live = kind === 'BUS' ? env.value.stops : env.value.groups?.[kind]
+          const first = (live?.items ?? env.value.reference?.[kind])?.[0]
+          if (!first?.lat || !first?.lon) return
+
+          const pos = new window.kakao.maps.LatLng(first.lat, first.lon)
+          const isTransport = kind === 'SW8' || kind === 'BUS'
+          const bgColor = isTransport ? '#0f766e' : '#4b5563'
+
+          const overlay = new window.kakao.maps.CustomOverlay({
+            position: pos,
+            yAnchor: 1.2,
+            content: `<div style="background:${bgColor};color:#fff;padding:3px 7px;border-radius:12px;font-size:11px;font-weight:600;box-shadow:0 2px 4px rgba(0,0,0,0.2);white-space:nowrap;">
+              ${label} · ${Math.round(first.distance)}m
+            </div>`
+          })
+          overlay.setMap(map)
+        })
+      }
+    })
+  }, [coords, cctv, env])
+
+  if (!coords) return null
+  return (
+      <div style={{ margin: '14px 0' }}>
+        <div
+            ref={mapRef}
+            style={{ width: '100%', height: '340px', borderRadius: '10px', border: '1px solid #e5dfd5' }}
+        />
+        <small style={{ display: 'block', marginTop: '6px', color: '#6b635b' }}>
+          기본 핀: 매물 위치 · 파란 원: 반경 300m · 노란 별: 생활방범 CCTV · 배지: 주요 교통·편의시설
+        </small>
+      </div>
+  )
+}
+
 function Night({ env,coords,night,setNight }) {
   const cctv = env.value?.cctv
   const nearest = cctv?.points[0]
   const date = nearest?.date || cctv?.date
   const cctvStatus = env.value ? 'CCTV 자료를 읽을 수 없습니다.' : coords
-    ? 'CCTV 거리를 확인하고 있습니다.' : '주소 좌표를 확인할 수 없어 CCTV 거리를 보류합니다.'
+      ? 'CCTV 거리를 확인하고 있습니다.' : '주소 좌표를 확인할 수 없어 CCTV 거리를 보류합니다.'
   const change = e => setNight({ ...night,[e.target.name]:e.target.value })
   return <Panel id="night" title="귀갓길 환경" meta="CCTV · 야간 방문">
     {cctv ? <p className="notice">{nearest ? '가장 가까운 생활방범 CCTV 약 '+Math.round(nearest.distance)+'m':'자료상 300m 이내 생활방범 CCTV 0곳'} <span className="inline-point">{cctvScore(cctv)}/40점</span><small>{cctv.source}{date && ' · '+date+' 기준'}</small></p>
-      : <p className="notice">{env.error || cctvStatus}</p>}
+        : <p className="notice">{env.error || cctvStatus}</p>}
+    <KakaoMap cctv={cctv} coords={coords} env={env} />
     <p className="panel-copy">밤에 직접 걸어본 경로와 현장 상태를 입력하면 귀갓길 점수를 계산합니다.</p>
     <div className="field-grid night-form">
       <label>걸어본 경로<input name="route" type="text" maxLength={120} placeholder="예) 두정역에서 건물까지" value={night.route || ''} onChange={change}/></label>
@@ -146,11 +252,11 @@ export default function Inspection({ lookup,criteria }) {
     price.value ? '유사 거래 '+price.value.count+'건' : price.error ? '실거래 조회 실패' : submitted ? '실거래 조회 중' : '계약 조건 입력 필요',
     risk.remaining ? risk.flags.length+'개 발견 · '+risk.remaining+'개 미확인' : risk.flags.length+'개 발견 · 높을수록 주의',
     nearby && nearby.access.score==null ? '일부 시설 자료 미확인'
-      : nearby?.access.score!=null ? '교통 '+nearby.access.transport+'점 · 생활시설 '+nearby.access.daily+'점'
-      : env.error ? '주변 자료 조회 실패' : coords ? '주변 시설 확인 중' : '좌표 자료 미확인',
+        : nearby?.access.score!=null ? '교통 '+nearby.access.transport+'점 · 생활시설 '+nearby.access.daily+'점'
+            : env.error ? '주변 자료 조회 실패' : coords ? '주변 시설 확인 중' : '좌표 자료 미확인',
     nearby?.cctv && scores[3]==null ? 'CCTV 배점 · 야간 확인 필요'
-      : scores[3]!=null ? 'CCTV와 야간 방문 기록 반영'
-      : env.error || nearby ? 'CCTV 조회 실패' : coords ? 'CCTV 확인 중' : '좌표 자료 미확인',
+        : scores[3]!=null ? 'CCTV와 야간 방문 기록 반영'
+            : env.error || nearby ? 'CCTV 조회 실패' : coords ? 'CCTV 확인 중' : '좌표 자료 미확인',
   ]
   const partial = [null,null,nearby?.access.observed ? nearby.access.observed+'점 확인' : null,
     nearby?.cctv ? cctvScore(nearby.cctv)+'/40점' : null]
@@ -180,4 +286,3 @@ export default function Inspection({ lookup,criteria }) {
     <div className="attribution"><ClipboardCheck size={14}/> 조회 자료 및 입력한 확인 결과 기준 <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap 기여자</a></div>
   </>
 }
-

@@ -28,14 +28,13 @@ for (const row of osm.addresses) {
 export function fromPostOffice(input) {
   const text = input.normalize('NFC').trim()
   const ward = text.match(/(?:^|\s|천안시)(서북구|동남구)(?=\s|[가-힣])/)?.[1]
-  const dong = text.match(/\((두정동|성정동|쌍용동|안서동)(?:[\s,)]|$)/)?.[1]
+  const dong = text.match(/\(([가-힣0-9]+(?:동|읍|면))(?:[\s,)]|$)/)?.[1]
   const short = text.replace(/\s*\([^)]*\)\s*$/,'')
-    .replace(/^(?:충청남도|충남)\s*/,'').replace(/^천안시?\s*/,'')
-    .replace(/^(?:서북구|동남구)\s*/,'').trim()
+      .replace(/^(?:충청남도|충남)\s*/,'').replace(/^천안시?\s*/,'')
+      .replace(/^(?:서북구|동남구)\s*/,'').trim()
   const rows = (byAddress.get(keyOf(short)) || [])
-    .filter(([,code]) => (!ward || wardOf(code)===ward) && (!dong || districts[code]===dong))
+      .filter(([,code]) => (!ward || wardOf(code)===ward) && (!dong || districts[code]===dong))
   if (!rows.length) return null
-  // 한 지번에 여러 도로명 주소가 연결될 수 있다. 지번을 유지하되 임의의 건물 좌표는 선택하지 않는다.
   const parcels = new Set(rows.map(([,code,lot]) => code+' '+lot))
   if (parcels.size > 1) return { ambiguous:true }
   const [road,code,lot] = rows[0]
@@ -47,18 +46,19 @@ export function fromPostOffice(input) {
   return { ...buildAddress(code,lot,roadAddress),coords,source:addresses.source,sourceDate:addresses.date }
 }
 
-export function buildAddress(code,lot,road) {
-  const dong = districts[code]
+export function buildAddress(code,lot,road,dongName) {
+  const dong = dongName || districts[code] || ''
   const [bun,ji='0'] = lot.replace(/^산\s*/,'').split('-')
   const prefix = '충남 천안시 '+wardOf(code)+' '
+  const jibunPart = [dong, lot].filter(Boolean).join(' ')
   return {
-    name:prefix+(road || dong+' '+lot), jibun:prefix+dong+' '+lot, dong, region:code.slice(0,5),
+    name:prefix+(road || jibunPart), jibun:prefix+jibunPart, dong, region:code.slice(0,5),
     parcel:{ sigunguCd:code.slice(0,5),bjdongCd:code.slice(5),platGbCd:lot.startsWith('산') ? '1':'0',bun:bun.padStart(4,'0'),ji:ji.padStart(4,'0') },
   }
 }
 
 export function supportedCode(code) {
-  return Object.hasOwn(districts,code)
+  return typeof code === 'string' && (code.startsWith('44131') || code.startsWith('44133'))
 }
 
 export function nearbyReference(lat,lon) {
@@ -68,9 +68,8 @@ export function nearbyReference(lat,lon) {
   for (const [kind,name,y,x] of osm.places) {
     const meters = distance(lat,lon,y,x)
     if (meters > 500) continue
-    ;(groups[kind] ||= []).push({name,distance:meters})
+        ;(groups[kind] ||= []).push({name,distance:meters})
   }
   for (const group of Object.values(groups)) group.sort((a,b) => a.distance-b.distance)
   return groups
 }
-

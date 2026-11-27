@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "server": "node --watch server/app.js",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",

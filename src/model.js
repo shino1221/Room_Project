@@ -1,5 +1,5 @@
 export const districts = { 두정동: '44133', 성정동: '44133', 쌍용동: '44133', 안서동: '44131' }
-export const regionOf = x => x.dong === '쌍용동' && x.region === '44131' ? '44131' : districts[x.dong]
+export const regionOf = x => x.region || (x.dong === '쌍용동' && x.region === '44131' ? '44131' : districts[x.dong])
 export const homes = ['단독·다가구', '연립·다세대', '아파트']
 export const riskItems = [
   ['owner', '임대 권한 불일치', '등기사항증명서의 소유자와 계약 상대방, 대리 계약이면 위임 서류를 대조한다.'],
@@ -26,9 +26,9 @@ export function safetyScore(cctv, night = {}) {
 
 export function validListing(x) {
   const number = (v, min) => v !== '' && v != null && Number.isFinite(Number(v)) && Number(v) >= min
-  return Object.hasOwn(districts, x.dong) && homes.includes(x.home) && ['전세','월세'].includes(x.contract)
-    && number(x.area, 0.01) && number(x.deposit, x.contract === '전세' ? 0.01 : 0)
-    && (x.contract === '전세' || number(x.rent, 0.01))
+  return typeof x.dong === 'string' && x.dong.trim().length > 0 && homes.includes(x.home) && ['전세','월세'].includes(x.contract)
+      && number(x.area, 0.01) && number(x.deposit, x.contract === '전세' ? 0.01 : 0)
+      && (x.contract === '전세' || number(x.rent, 0.01))
 }
 
 export const formatNumber = value => Number(value).toLocaleString('ko-KR', { maximumFractionDigits: 2 })

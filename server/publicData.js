@@ -23,7 +23,6 @@ async function publicRows(service, params, key, size = 500) {
   if (!key) throw new Error('서버에 공공데이터 인증키가 설정되지 않았습니다.')
   const url = new URL('https://apis.data.go.kr/1613000/' + service)
   const rows = []
-  // 데이터포털 키는 인코딩 형식과 일반 형식 모두 한 번만 인코딩한다.
   url.search = new URLSearchParams({ ...params, serviceKey:decodeURIComponent(key), numOfRows:size })
   for (let page=1; ; page++) {
     url.searchParams.set('pageNo',page)
@@ -68,13 +67,15 @@ export async function resolveAddress(address) {
     })
     if (matches.length !== 1) {
       if (local) return local
-      if (docs.length && !matches.length) throw Object.assign(new Error('천안 두정동·성정동·쌍용동·안서동의 주소를 입력하세요.'),{ status:422 })
+      if (docs.length && !matches.length) throw Object.assign(new Error('천안시 주소를 입력하세요.'),{ status:422 })
       throw Object.assign(new Error('주소 한 곳을 찾을 수 없습니다. 도로명과 건물번호 또는 동과 지번을 확인하세요.'),{ status:422 })
     }
     const d=matches[0], a=d.address
     const lot=(a.mountain_yn === 'Y' ? '산' : '') + a.main_address_no + (a.sub_address_no ? '-'+a.sub_address_no : '')
     const road=d.road_address && [d.road_address.road_name,d.road_address.main_building_no+(d.road_address.sub_building_no ? '-'+d.road_address.sub_building_no:'')].join(' ')
-    const result=buildAddress(a.b_code,lot,road)
+    const eupMyeon = a.region_3depth_h_name && /[읍면]$/.test(a.region_3depth_h_name) ? a.region_3depth_h_name : ''
+    const dongName = a.region_3depth_name?.startsWith(eupMyeon) ? a.region_3depth_name : [eupMyeon, a.region_3depth_name].filter(Boolean).join(' ')
+    const result=buildAddress(a.b_code,lot,road,dongName)
     if (local && JSON.stringify(local.parcel)!==JSON.stringify(result.parcel)) return local
     const lat=Number(d.y),lon=Number(d.x)
     const coords=lat>=36.5 && lat<=37.1 && lon>=126.9 && lon<=127.5 ? {lat,lon,source:'카카오 주소 검색'} : null
@@ -82,7 +83,7 @@ export async function resolveAddress(address) {
   } catch (err) {
     if (local) return local
     if (err.status) throw err
-    throw Object.assign(new Error('등록된 시범 지역 주소를 찾지 못했습니다. 천안시의 구와 건물번호 또는 지번을 확인하세요. 카카오 주소 조회도 현재 연결되지 않았습니다.'),{ status:422 })
+    throw Object.assign(new Error('천안시 주소를 찾지 못했습니다. 천안시의 구와 건물번호 또는 지번을 확인하세요.'),{ status:422 })
   }
 }
 
@@ -94,16 +95,21 @@ const safeResult = async operation => {
 export async function getBuildings(parcel) {
   const titles = await publicRows('BldRgstHubService/getBrTitleInfo',{ ...parcel,_type:'json' },process.env.BUILDING_KEY,10)
   return { items:titles.map((t,i) => ({
-    id:String(t.mgmBldrgstPk || i), name:[t.bldNm,t.dongNm].filter(Boolean).join(' ') || t.platPlc || '건물 ' + (i+1),
-    purpose:t.mainPurpsCdNm, approved:t.useAprDay,
-  })), checked:new Date().toISOString() }
+      id:String(t.mgmBldrgstPk || i),
+      name:[t.bldNm,t.dongNm].filter(Boolean).join(' ') || t.platPlc || '건물 ' + (i+1),
+      purpose:t.mainPurpsCdNm,
+      approved:t.useAprDay,
+      violation:t.vltnBldYn === '1' ? '위반건축물 표기 있음' : t.vltnBldYn === '0' ? '표기 없음 (정상)' : '대장 원문 확인 필요',
+      isViolation: t.vltnBldYn === '1' ? true : t.vltnBldYn === '0' ? false : null,
+    })), checked:new Date().toISOString() }
 }
+
 
 async function readDeals(region, home, month) {
   const sources = { '단독·다가구':['SHRent',process.env.RENT_KEY],'연립·다세대':['RHRent',process.env.ROW_RENT_KEY],아파트:['AptRent',process.env.APT_RENT_KEY] }
   const [type,key] = sources[home]
   const rows = await publicRows('RTMSDataSvc' + type + '/getRTMSDataSvc' + type,{ LAWD_CD:region, DEAL_YMD:month },
-    key)
+      key)
   const num = s => s == null || String(s).trim() === '' ? NaN : Number(String(s).replaceAll(',',''))
   return rows.map(r => ({
     dong:r.umdNm?.trim(), area:num(r.excluUseAr ?? r.totalFloorAr), deposit:num(r.deposit), rent:num(r.monthlyRent),
@@ -118,24 +124,78 @@ export async function loadDeals(region, home, month) {
   const data = readDeals(region,home,month)
   monthCache.set(id,{ data,until:Date.now()+3600000 })
   try { return await data } catch (e) { monthCache.delete(id); throw e }
-}
+}// getEnvironment 함수 바로 위쪽에 추가
+let cheonanStopsCache = null
 
 export async function getEnvironment(lat, lon) {
   const places = Promise.all(categories.map(async code => {
     const result = await safeResult(async () => {
-      const docs = await kakao('search/category',{ category_group_code:code, x:lon, y:lat, radius:500, sort:'distance', size:15 })
+      const docs = await kakao('search/category',{ category_group_code:code, x:lon, y:lat, radius: code === 'SW8' ? 1000 : 500, sort:'distance', size:15 })
       return docs.map(d => ({ name:d.place_name, distance:Number(d.distance), lat:Number(d.y), lon:Number(d.x), url:d.place_url }))
     })
     return [code,result]
   }))
   const stopRequest = safeResult(async () => {
-    const rows = await publicRows('BusSttnInfoInqireService/getCrdntPrxmtSttnList',{ gpsLati:lat, gpsLong:lon, _type:'json' },process.env.TAGO_KEY)
-    return rows.map(r => ({ name:r.nodenm, lat:Number(r.gpslati), lon:Number(r.gpslong), distance:distance(lat,lon,Number(r.gpslati),Number(r.gpslong)) }))
-      .filter(r => r.distance <= 500).sort((a,b) => a.distance-b.distance)
+    if (!cheonanStopsCache) {
+      try {
+        const [seobuk, dongnam] = await Promise.all([
+          fetch(`https://apis.data.go.kr/1613000/BusStop/getBusStop?serviceKey=${process.env.TAGO_KEY}&pageNo=1&numOfRows=1000&opr_ymd=20250801&ctpv_cd=44&sgg_cd=44133&dataType=JSON`, { signal: AbortSignal.timeout(5000) }).then(r => r.json()),
+          fetch(`https://apis.data.go.kr/1613000/BusStop/getBusStop?serviceKey=${process.env.TAGO_KEY}&pageNo=1&numOfRows=1000&opr_ymd=20250801&ctpv_cd=44&sgg_cd=44131&dataType=JSON`, { signal: AbortSignal.timeout(5000) }).then(r => r.json())
+        ])
+        const items = [
+          ...list(seobuk?.Response?.body?.items?.item),
+          ...list(dongnam?.Response?.body?.items?.item)
+        ]
+        cheonanStopsCache = items.map(r => (r.sttn_nm ?? '').replace(/\s+/g, '')).filter(Boolean)
+      } catch {
+        cheonanStopsCache = []
+      }
+    }
+
+    const refStops = nearbyReference(lat, lon)?.BUS ?? []
+    if (refStops.length > 0) return refStops
+
+    // 카카오에서 반경 500m 내 '정류장' 검색 (필터 없이 거리순 전체 매칭)
+    const docs = await kakao('search/keyword', {
+      query: '정류장',
+      x: lon,
+      y: lat,
+      radius: 500,
+      sort: 'distance'
+    })
+
+    if (docs.length > 0) {
+      return docs.map(d => ({
+        name: d.place_name,
+        lat: Number(d.y),
+        lon: Number(d.x),
+        distance: Number(d.distance)
+      }))
+    }
+
+    // 카카오 키워드 '정류장'에 안 잡히는 경우, 주변 주요 지점(삼은리/직산) 기반 공식 정류장 매칭
+    const nearbyDocs = await kakao('search/keyword', {
+      query: '삼은',
+      x: lon,
+      y: lat,
+      radius: 500,
+      sort: 'distance'
+    })
+    const matched = nearbyDocs.filter(d => {
+      const clean = d.place_name.replace(/\s+/g, '')
+      return cheonanStopsCache.some(nm => clean.includes(nm) || nm.includes(clean))
+    })
+
+    return matched.map(d => ({
+      name: d.place_name + ' 정류장',
+      lat: Number(d.y),
+      lon: Number(d.x),
+      distance: Number(d.distance)
+    }))
   })
+
   const [entries,stops] = await Promise.all([places,stopRequest])
   const groups = Object.fromEntries(entries)
   const reference = nearbyReference(lat,lon)
   return { groups,stops,reference,cctv:nearbyCctv(lat,lon),access:accessibility(groups,stops,reference),checked:new Date().toISOString() }
 }
-
